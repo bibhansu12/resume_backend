@@ -1,6 +1,4 @@
-/*
-This module handles all Zoom Meeting SDK authentication and token generation.
-*/
+
 const jwt = require(jsonwebToken);
 const axios = require(axios);
 

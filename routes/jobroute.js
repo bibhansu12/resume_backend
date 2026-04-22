@@ -1,4 +1,4 @@
-// BACKEND/routes/jobroute.js
+
 const express = require('express');
 const db = require('../database/db');
 const verifyToken = require('../verifytoken');
@@ -10,9 +10,7 @@ require('dotenv').config();
 
 const router = express.Router();
 
-// --------------------------------------------------
-//  Helper: optional token (for public GET & apply)
-// --------------------------------------------------
+
 function verifyTokenOptional(req, _res, next) {
   const header = req.headers['authorization'];
   if (!header) return next();
@@ -24,15 +22,13 @@ function verifyTokenOptional(req, _res, next) {
     token,
     process.env.JWT_SECRET || 'secret123',
     (err, user) => {
-      if (!err) req.user = user; // { id, email, role, name }
+      if (!err) req.user = user; 
       next();
     }
   );
 }
 
-// --------------------------------------------------
-//  Multer setup for CV upload
-// --------------------------------------------------
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, path.join(__dirname, '..', 'uploads'));
@@ -45,16 +41,10 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 3 * 1024 * 1024 }, // 3MB max
+  limits: { fileSize: 3 * 1024 * 1024 }, 
 });
 
-// ==================================================
-//  POST /api/jobs              -> create job
-//  GET  /api/jobs              -> list jobs
-//  POST /api/jobs/:jobId/apply -> apply with CV
-// ==================================================
 
-// -------------------- CREATE JOB (recruiter) --------------------
 router.post('/', verifyToken, requireRecruiter, async (req, res) => {
   try {
     const recruiterId = req.user.id;
@@ -106,7 +96,7 @@ router.post('/', verifyToken, requireRecruiter, async (req, res) => {
   }
 });
 
-// -------------------- LIST JOBS --------------------
+// LIST JOBS 
 router.get('/', verifyTokenOptional, async (req, res) => {
   try {
     const { title = '', mine } = req.query;
@@ -114,7 +104,7 @@ router.get('/', verifyTokenOptional, async (req, res) => {
     let sql = 'SELECT * FROM jobs WHERE 1=1';
     const params = [];
 
-    // If recruiter asks for mine=true, filter by recruiter_id
+    
     if (mine === 'true' && req.user && req.user.role === 'recruiter') {
       sql += ' AND recruiter_id = ?';
       params.push(req.user.id);
@@ -136,14 +126,14 @@ router.get('/', verifyTokenOptional, async (req, res) => {
   }
 });
 
-// -------------------- APPLY TO JOB (CV + details) --------------------
+
 router.post(
   '/:jobId/apply',
   verifyTokenOptional,
-  upload.single('cv'),          // expects field name 'cv' from frontend
+  upload.single('cv'),         
   async (req, res) => {
     try {
-      // Debug: see exactly what we receive
+      
       console.log('=== APPLY REQUEST ===');
       console.log('headers:', req.headers['content-type']);
       console.log('body:', req.body);
@@ -165,7 +155,7 @@ router.post(
         return res.status(400).json({ message: 'Missing required fields' });
       }
 
-      // find job & recruiter
+      
       const [jobRows] = await db.query('SELECT * FROM jobs WHERE id = ?', [
         jobId,
       ]);

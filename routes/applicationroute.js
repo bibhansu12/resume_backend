@@ -1,8 +1,13 @@
-// BACKEND/routes/applicationroute.js
+
 const express = require('express');
 const db = require('../database/db');
 const verifyToken = require('../verifytoken');
 const requireRecruiter = require('../middleware/requireRecruiter');
+const {
+  sendEmail,
+  formatInterviewTime,
+  buildAcceptanceEmailHtml,
+} = require('../service/emailService');
 
 const router = express.Router();
 
@@ -36,7 +41,7 @@ router.get('/', verifyToken, requireRecruiter, async (req, res) => {
       candidateId: r.candidate_id,
       name: r.name,
       email: r.email,
-      cvUrl: r.cv_url,            
+      cvUrl: r.cv_url,
       phone: r.phone,
       gender: r.gender,
       country: r.country,
@@ -64,14 +69,15 @@ router.get('/', verifyToken, requireRecruiter, async (req, res) => {
   }
 });
 
-// ---------- UPDATE STATUS ----------
+
 router.patch('/:id/status', verifyToken, requireRecruiter, async (req, res) => {
   try {
     const recruiterId = req.user.id;
     const { id } = req.params;
-    
 
-    const { status, message, zoomLink } = req.body;
+    console.log('PATCH /applications/:id/status body:', req.body);
+
+    const { status, message, zoomLink, interviewTime } = req.body;
 
     const allowed = ['applied', 'accepted', 'rejected', 'interview'];
     if (!allowed.includes(status)) {
@@ -95,25 +101,61 @@ router.patch('/:id/status', verifyToken, requireRecruiter, async (req, res) => {
       id,
     ]);
 
-    if (status === 'accepted'){
-      const defaultMsg = 'Congratulations $(application.name), you have been accepted for next round';
-      const finalMessage =  message && message.trim() !== '' ? message : defaultMsg;
+    if (status === 'accepted') {
+      
+      const timeStr = interviewTime ? formatInterviewTime(new Date(interviewTime)) : null;
+      let finalMessage;
+      if (message && message.trim() !== '') {
+        finalMessage = message;
+      } else if (timeStr) {
+        finalMessage = `🎉 Congratulations ${application.name}! You have been accepted for the next round.\n📅 Interview: ${timeStr}${zoomLink ? `\n🔗 Zoom: ${zoomLink}` : ''}`;
+      } else {
+        finalMessage = `🎉 Congratulations ${application.name}! You have been accepted for the next round.`;
+      }
+
+      console.log('interviewTime before insert:', interviewTime);
 
       await db.query(
-       ` INSERT INTO notifications
-        (candidate_id, recruiter_id, application_id, job_id, message, zoom_link)
-        VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO notifications
+           (candidate_id, recruiter_id, application_id, job_id,
+            message, zoom_link, is_read, created_at, interview_time, reminder_sent)
+         VALUES (?, ?, ?, ?, ?, ?, 0, NOW(), ?, 0)`,
         [
-        application.candidate_id,
+          application.candidate_id,
           recruiterId,
           application.id,
           application.job_id,
           finalMessage,
           zoomLink || null,
-        
+          interviewTime ? new Date(interviewTime) : null,
         ]
-
       );
+
+      //  Send acceptance email to candidate 
+      if (application.email) {
+        // Fetch job details for the email
+        const [jobRows] = await db.query(
+          'SELECT title, company FROM jobs WHERE id = ?',
+          [application.job_id]
+        );
+        const job = jobRows[0] || {};
+
+        const html = buildAcceptanceEmailHtml({
+          candidateName: application.name,
+          jobTitle: job.title || 'the position',
+          company: job.company || '',
+          interviewTime: interviewTime ? new Date(interviewTime) : null,
+          zoomLink: zoomLink || null,
+          recruiterMessage: message && message.trim() !== '' ? message : null,
+        });
+
+        sendEmail({
+          to: application.email,
+          subject: `🎉 Interview Scheduled – ${job.title || 'Next Round'} at ${job.company || 'the company'}`,
+          html,
+          text: finalMessage,
+        }).catch((err) => console.error('[Accept Email] Failed:', err.message));
+      }
     }
 
     const [rows] = await db.query(
@@ -167,5 +209,6 @@ router.patch('/:id/status', verifyToken, requireRecruiter, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+ 
 
 module.exports = router;

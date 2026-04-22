@@ -18,7 +18,9 @@ airoute.post("/analyze", async (req, res) => {
   }
 
   try {
-    const prompt = `You are a world-class hiring manager and resume expert.
+    const prompt = `
+You are a world-class hiring manager and resume expert.
+
 Analyze the following resume for a "${jobRole}" position.
 
 Resume Content:
@@ -26,55 +28,100 @@ Resume Content:
 ${resumeText}
 ---
 
-Provide a detailed analysis. Respond ONLY with a valid JSON object with two keys:
-1. "feedback": A string containing constructive feedback. Include strengths, weaknesses, and specific suggestions for improvement. Format using markdown.
-2. "score": An integer from 0 to 100 representing fit for the role.`;
+Return ONLY a valid JSON object with EXACTLY these keys and types:
 
-    const response = await groq.chat.completions.create({
-      model: process.env.GROQ_MODEL,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 1,
+{
+  "score": 0,
+  "feedback": "string"
+}
+
+Where:
+
+- "score" is an integer between 0 and 100 (number type, not string).
+- "feedback" is a markdown-formatted string that contains **three sections**:
+
+  ## Strengths
+  - bullet points of strengths
+
+  ## Weaknesses
+  - bullet points of weaknesses
+
+  ## Suggestions
+  - bullet points of specific, actionable suggestions for improvement
+
+Rules:
+- Do NOT include any other keys.
+- Do NOT include any text before or after the JSON object.
+`;
+
+    const chatCompletion = await groq.chat.completions.create({
+      messages: [
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      model: "llama-3.1-8b-instant",
+      temperature: 0.2,              
+      max_completion_tokens: 512,
       top_p: 1,
-      max_completion_tokens: 8192,
+      stream: false,
       response_format: { type: "json_object" },
-      reasoning_effort:  "default",
     });
+
+    const rawContent = chatCompletion.choices[0].message.content;
+    console.log("Raw AI content:", rawContent);
 
     let aiResult;
     try {
-      aiResult = JSON.parse(response.choices[0].message.content);
-    } catch (parseError) {
-      console.error(
-        "Failed to parse AI response:",
-        response.choices[0].message.content
-      );
+      aiResult = JSON.parse(rawContent);
+    } catch (e) {
+      console.error("JSON parse failed:", e);
       return res.status(500).json({
-        message: "Invalid response from AI.",
+        message: "AI returned invalid JSON.",
       });
     }
 
-    if (typeof aiResult.score !== "number" || !aiResult.feedback) {
+    console.log("Parsed AI result:", aiResult);
+
+    let { score, feedback } = aiResult;
+
+    // Coerce "72" -> 72 if needed
+    if (typeof score === "string" && !isNaN(parseInt(score, 10))) {
+      score = parseInt(score, 10);
+    }
+
+    if (
+      typeof score !== "number" ||
+      Number.isNaN(score) ||
+      score < 0 ||
+      score > 100 ||
+      typeof feedback !== "string" ||
+      feedback.trim().length === 0
+    ) {
       return res.status(500).json({
-        message: "AI response missing score or feedback.",
+        message: "AI response missing or invalid score or feedback.",
       });
     }
 
-    res.json({
-      feedback: aiResult.feedback,
-      score: aiResult.score,
+    return res.json({
+      score,
+      feedback, // markdown with Strengths / Weaknesses / Suggestions headings
     });
   } catch (err) {
-    console.error("Groq Error:", err.response?.data || err.message);
-    res.status(500).json({
+    console.error("Groq Error:", err);
+
+    if (err.status === 413 || err.error?.code === "rate_limit_exceeded") {
+      return res.status(413).json({
+        message: "Rate limit exceeded. Please wait and try again.",
+      });
+    }
+
+    return res.status(500).json({
       message: "Failed to get analysis from AI.",
       error: err.message,
     });
   }
-  
-
-
-
-
 });
 
 module.exports = airoute;
